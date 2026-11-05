@@ -26,6 +26,7 @@ Use spec: https://common-changelog.org/
 
 ### Fixed
 
+- The `.sha256` file of each release archive names the archive itself, so `sha256sum -c` works on it
 - Stop classifying complete kitty keyboard status replies (`CSI ? flags u`) as user input for leader selection
 - Prevent infinite loop in `mkdirAll` when directory path contains a dangling symlink
 - Prevent terminal and kitty keyboard queries from taking leadership control

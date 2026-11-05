@@ -247,8 +247,12 @@ pub fn build(b: *std.Build) void {
             tar.addDirectoryArg(staging.getDirectory());
             tar.addArgs(&.{ "zmx", "LICENSE", "third-party" });
 
+            // Hash from the tarball's own directory, so the .sha256 file names
+            // it as it is published and `sha256sum -c` works next to it.
             const shasum = b.addSystemCommand(&.{"sha256sum"});
-            shasum.addFileArg(tarball);
+            shasum.setCwd(tarball.dirname());
+            shasum.addFileInput(tarball);
+            shasum.addArg(tarball_name);
             const shasum_output = shasum.captureStdOut(.{});
 
             const install_tar = b.addInstallFile(tarball, b.fmt("dist/{s}", .{tarball_name}));
