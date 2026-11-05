@@ -233,12 +233,19 @@ pub fn build(b: *std.Build) void {
             const arch_name = @tagName(release_target.cpu_arch orelse .x86_64);
             const tarball_name = b.fmt("zmx-{s}-{s}-{s}.tar.gz", .{ version, os_name, arch_name });
 
+            // The archive carries the license texts next to the binary: zmx's
+            // own and those of the libraries compiled into it.
+            const staging = b.addWriteFiles();
+            _ = staging.addCopyFile(release_exe.getEmittedBin(), "zmx");
+            _ = staging.addCopyFile(b.path("LICENSE"), "LICENSE");
+            _ = staging.addCopyDirectory(b.path("packaging/third-party"), "third-party", .{});
+
             const tar = b.addSystemCommand(&.{ "tar", "-czf" });
 
             const tarball = tar.addOutputFileArg(tarball_name);
             tar.addArg("-C");
-            tar.addDirectoryArg(release_exe.getEmittedBinDirectory());
-            tar.addArg("zmx");
+            tar.addDirectoryArg(staging.getDirectory());
+            tar.addArgs(&.{ "zmx", "LICENSE", "third-party" });
 
             const shasum = b.addSystemCommand(&.{"sha256sum"});
             shasum.addFileArg(tarball);

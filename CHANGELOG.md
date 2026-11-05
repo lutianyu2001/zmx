@@ -16,6 +16,7 @@ Use spec: https://common-changelog.org/
 - Completions for [`yash`](https://magicant.github.io/yash/)
 - History command now accepts --screen (print only active screen) and --scrollback (num of rows to print)
 - Attaching now reports the session name and foreground process to the terminal as `zmx_session` and `zmx_foreground` user variables
+- Release archives include zmx's `LICENSE` and, in `third-party/`, the licenses of the libraries compiled into the binary
 
 ### Changed
 
