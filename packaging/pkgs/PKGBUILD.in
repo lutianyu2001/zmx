@@ -14,4 +14,13 @@ sha256sums=('@@SHA256_X86_64@@')
 
 package() {
   install -Dm755 zmx "${pkgdir}/usr/bin/zmx"
+  # The license texts the archive carries: the project's, and those of what is built into it.
+  local f
+  for f in LICENSE* COPYING* NOTICE*; do
+    if [ -f "$f" ]; then install -Dm644 "$f" -t "${pkgdir}/usr/share/licenses/${pkgname}"; fi
+  done
+  if [ -d third-party ]; then
+    install -dm755 "${pkgdir}/usr/share/licenses/${pkgname}"
+    cp -r --no-preserve=ownership third-party "${pkgdir}/usr/share/licenses/${pkgname}/"
+  fi
 }

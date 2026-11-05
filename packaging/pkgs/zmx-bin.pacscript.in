@@ -12,4 +12,13 @@ sha256sums_arm64=("@@SHA256_AARCH64@@")
 
 package() {
   install -Dm755 "${srcdir}/zmx" -t "${pkgdir}/usr/bin"
+  # The license texts the archive carries: the project's, and those of what is built into it.
+  local f
+  for f in "${srcdir}"/LICENSE* "${srcdir}"/COPYING* "${srcdir}"/NOTICE*; do
+    if [ -f "$f" ]; then install -Dm644 "$f" -t "${pkgdir}/usr/share/doc/${pkgname}"; fi
+  done
+  if [ -d "${srcdir}/third-party" ]; then
+    install -dm755 "${pkgdir}/usr/share/doc/${pkgname}"
+    cp -r --no-preserve=ownership "${srcdir}/third-party" "${pkgdir}/usr/share/doc/${pkgname}/"
+  fi
 }
