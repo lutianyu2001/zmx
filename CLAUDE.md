@@ -28,5 +28,6 @@ the IPC can change between versions.
 
 ## Packages
 
-zmx publishes to q0wkp/pkgs through `packaging/pkgs/sync.sh`, run from a checkout of main. The pkgs README says how
-publishing works. Packages are signed with the user's personal GPG key, the one that signs their commits.
+zmx's recipe for q0wkp/pkgs is in that repository, `recipes/zmx/`, whose Sync workflow packages each release: daily,
+and right after a release, when the `pkgs` job in `release.yml` asks it to (with the `PKGS_DISPATCH_TOKEN` secret).
+The pkgs README says how publishing works.
