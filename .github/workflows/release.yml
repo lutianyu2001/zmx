@@ -36,3 +36,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" zig-out/dist/* --title "$GITHUB_REF_NAME" --generate-notes
+
+  # Asks q0wkp/pkgs to package this release now, rather than on its daily run. The token is a
+  # fine-grained one of q0wkp's, for q0wkp/pkgs only, with Actions read and write: it can start the
+  # workflow but not change the repository. Without it this job does nothing.
+  pkgs:
+    # The job that creates the release. Without one in this workflow, run it on the release's
+    # publication instead (on: release: types: [published]) and drop this line.
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Ask q0wkp/pkgs to package the release
+        env:
+          GH_TOKEN: ${{ secrets.PKGS_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::PKGS_DISPATCH_TOKEN is not set: q0wkp/pkgs picks the release up on its daily run"
+            exit 0
+          fi
+          gh workflow run sync.yml -R q0wkp/pkgs -f packages="zmx"
