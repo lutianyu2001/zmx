@@ -1,3 +1,7 @@
+# The release of prebuilt archives: pushing a version tag runs ci.yml, then builds the archives on
+# each system, and creates the GitHub release with them. This file holds all of the project's
+# releasing; what is marked Per project is this project's own. By hand: the same build commands,
+# then gh release create with the archives.
 name: Release
 
 on:
@@ -9,69 +13,84 @@ permissions:
   contents: read
 
 jobs:
-  # Builds the release with neither a secret nor a token that can write: the build runs the
-  # project's code and its dependencies'.
+  # Builds the archives from the tag, with neither a secret nor a token that can write: building runs
+  # the project's code and its dependencies'.
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    strategy:
+      matrix:
+        # Per project: the systems the release ships for, each with the name its archive carries.
+        include:
+          # zig builds every target's archive on this one runner.
+          - os: ubuntu-24.04
+            name: all
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # Per project: the steps that build the program from the tag and put it, with its license
+      # texts, into dist/ as one archive per system, named <project>-<tag>-<name>.
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
           # What is published is built from scratch, not from a cache another run wrote.
           use-cache: false
-
       - name: Check that the tag matches build.zig.zon
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           version=$(sed -nE 's/^ *\.version = "(.*)",$/\1/p' build.zig.zon)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME doesn't match version $version" >&2
+          if [ "v$version" != "$TAG" ]; then
+            echo "tag $TAG doesn't match version $version" >&2
             exit 1
           fi
-
+      # No ci.yml: the fork's tests run here, before anything is built for release.
       - name: Run unit tests
         run: zig build test -Dtarget=x86_64-linux-musl
-
-      - name: Build release binaries
-        run: zig build release
+      - name: Build and pack
+        env:
+          NAME: ${{ matrix.name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          zig build release
+          mkdir -p dist
+          cp zig-out/dist/* dist/
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dist
-          path: zig-out/dist/
+          name: release-${{ matrix.name }}
+          path: dist/
           if-no-files-found: error
 
-  # Publishes the release from what build built, and runs none of the project's code.
-  release:
+  # Creates the release from the archives build made, and runs none of the project's code.
+  github-release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: dist
-          path: dist
+          pattern: release-*
+          merge-multiple: true
+          path: dist/
 
-      - name: Publish the release
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --verify-tag
-          --title "$GITHUB_REF_NAME" --generate-notes
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes
 
   # Asks q0wkp/pkgs to package this release now, rather than on its daily run. The token is a
   # fine-grained one of q0wkp's, for q0wkp/pkgs only, with Actions read and write: it can start the
   # workflow but not change the repository. Without it this job does nothing.
   pkgs:
-    # The job that creates the release. Without one in this workflow, run it on the release's
-    # publication instead (on: release: types: [published]) and drop this line.
-    needs: release
+    # After the job that creates the release, which this one reads.
+    needs: github-release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
