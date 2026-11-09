@@ -28,6 +28,7 @@ the IPC can change between versions.
 
 ## Packages
 
-zmx's recipe for q0wkp/pkgs is in that repository, `recipes/zmx/`, whose Sync workflow packages each release: daily,
-and right after a release, when the `pkgs` job in `release.yml` asks it to (with the `PKGS_DISPATCH_TOKEN` secret).
+zmx's recipe for q0wkp/pkgs is in that repository, `recipes/zmx/`, whose Sync workflow packages each release when the
+`pkgs` job in `release.yml` asks it to (with the `PKGS_DISPATCH_TOKEN` secret). Sync has no schedule, so a release
+that job didn't reach waits for Sync to be run by hand.
 The pkgs README says how publishing works.
