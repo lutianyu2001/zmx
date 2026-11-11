@@ -11,6 +11,14 @@ this file, is committed straight to main.
 PRs are written in English, also into this fork, in the user's words "PR 全都用英语!" and "PR 的模板要按 /gen-tlu-pr
 来". Keep talking to the user in Chinese.
 
+## Releases
+
+A release's tag is the next upstream version plus `-mod.X.Y` (decided 2026-11-11): Y counts the releases, and X goes
+up, with Y back at 1, when a release breaks compatibility with the one before it (the IPC, file names, settings). The
+numbering restarted at `v0.8.2-mod.1.1`: the releases `v0.8.2-mod.1` and `v0.8.2-mod.2` and their tags were deleted,
+and the few machines that had them are reinstalled by hand. The version is in `build.zig.zon`, which the release
+commit (`chore(release): release v<version>`) changes and the release workflow checks against the tag.
+
 ## How the user runs zmx
 
 The user connects with Zap over SSH into the build machine and runs `zmx attach claudeN`. Each zmx session holds an
