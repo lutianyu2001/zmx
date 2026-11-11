@@ -31,7 +31,8 @@ jobs:
           persist-credentials: false
 
       # Per project: the steps that build the program from the tag and put it, with its license
-      # texts, into dist/ as one archive per system, named <project>-<tag>-<name>.
+      # texts, into dist/ as one archive per system, named <project>-<version>-<name>, the version
+      # being the tag without its v.
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
