@@ -40,3 +40,9 @@ zmx's recipe for q0wkp/pkgs is in that repository, `recipes/zmx/`, whose Sync wo
 `pkgs` job in `release.yml` asks it to (with the `PKGS_DISPATCH_TOKEN` secret). Sync has no schedule, so a release
 that job didn't reach waits for Sync to be run by hand.
 The pkgs README says how publishing works.
+
+The recipe publishes `zmx-bin` (pacman, Pacstall) and the formula `zmx` (Homebrew), and beside them `zmx-git` for all
+three, which the user's own machine builds from main (q0wkp/pkgs publishes only its PKGBUILD, pacscript and formula).
+Those read `minimum_zig_version` from `build.zig.zon` and download that Zig themselves, so a new Zig needs no change
+there; a change to how zmx is built does (the `zig build` options, where `LICENSE` and `packaging/third-party` are):
+the three templates `recipes/zmx/zmx-git.*.in` and `homebrew-git.rb.in` in q0wkp/pkgs repeat it.
