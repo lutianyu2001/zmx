@@ -12,6 +12,9 @@
   ·
   Sponsored by <a href="https://pico.sh">pico.sh</a>
 </p>
+<p align="center">
+  <a href="https://github.com/lutianyu2001/zmx/pulls?q=is%3Apr+head%3Aupstream"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Flutianyu2001%2Fzmx%2Fbadges%2Fsync-upstream.json" alt="Whether this fork is up to date with upstream"></a>
+</p>
 
 ## features
 
