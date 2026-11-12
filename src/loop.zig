@@ -16,7 +16,7 @@ const ghostty_vt = terminal.ghostty_vt;
 
 /// clientLoop sends ipc commands to its corresponding daemon.  It uses poll() as its non-blocking
 /// mechanism. It will send stdin to the daemon and receive stdout from the daemon.
-pub fn clientLoop(client_sock_fd: i32, env_str: []const u8) !ClientResult {
+pub fn clientLoop(client_sock_fd: i32, env_str: []const u8, min_window_size: ?bool) !ClientResult {
     std.log.info("client loop fd={d}", .{client_sock_fd});
     const gpa: std.mem.Allocator = blk: {
         if (builtin.mode == .debug) {
@@ -45,6 +45,11 @@ pub fn clientLoop(client_sock_fd: i32, env_str: []const u8) !ClientResult {
 
     if (env_str.len > 0) {
         try ipc.appendMessage(gpa, &sock_write_buf, .EnvSet, env_str);
+    }
+
+    // Before .Init, whose snapshot is laid out at the size the setting gives.
+    if (min_window_size) |enable| {
+        try ipc.appendMessage(gpa, &sock_write_buf, .MinWindow, &.{@intFromBool(enable)});
     }
 
     // Send init message with terminal size (buffered)
@@ -507,6 +512,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                         .EnvSet => try daemon.handleEnvSet(gpa, client, msg.payload),
                         .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
                         .Capture => try daemon.handleCapture(gpa, client, &term, msg.payload),
+                        .MinWindow => try daemon.handleMinWindow(gpa, pty_fd, &term, msg.payload),
                         .Run => try daemon.handleRun(gpa, io, client, msg.payload),
                         .Ack, .TaskComplete, .LabelData, .EnvData, .Unsupported => {},
                         .Write => try daemon.handleWrite(gpa, client, msg.payload),
@@ -611,7 +617,8 @@ pub const Daemon = struct {
     // cols/rows of session.
     leader_client_fd: ?i32 = null,
     /// Size the PTY to the smallest cols and rows among attached terminal
-    /// clients instead of following the leader. Fixed when the session is created.
+    /// clients instead of following the leader. Set when the session is created
+    /// and changed by `.MinWindow`.
     min_window_size: bool = false,
     running: bool = true,
     pid: i32 = undefined,
@@ -778,12 +785,6 @@ pub const Daemon = struct {
                 if (self.command != null) {
                     std.log.warn(
                         "session already exists, ignoring command session={s}",
-                        .{sesh_name},
-                    );
-                }
-                if (self.min_window_size) {
-                    std.log.warn(
-                        "session already exists, ignoring --min-window session={s}",
                         .{sesh_name},
                     );
                 }
@@ -1152,6 +1153,27 @@ pub const Daemon = struct {
 
         try resizeSession(gpa, pty_fd, term, resize);
         std.log.debug("resize rows={d} cols={d}", .{ resize.rows, resize.cols });
+    }
+
+    /// `zmx attach --min-window` or `--unset-min-window` on a running session.
+    pub fn handleMinWindow(
+        self: *Daemon,
+        gpa: std.mem.Allocator,
+        pty_fd: i32,
+        term: *ghostty_vt.Terminal,
+        payload: []const u8,
+    ) !void {
+        if (payload.len != 1) return;
+        const enable = payload[0] != 0;
+        if (enable == self.min_window_size) return;
+        self.min_window_size = enable;
+        std.log.info("min window {s} session={s}", .{ if (enable) "set" else "unset", self.session_name });
+        // Turned on: daemonLoop applies the smallest size before it polls again.
+        if (enable) return;
+        // Turned off: the leader sizes the session again, so give it its own
+        // size back rather than leave it at the smallest one until it resizes.
+        const leader = self.getLeaderClient() orelse return;
+        try resizeSession(gpa, pty_fd, term, leader.size orelse return);
     }
 
     pub fn handleDetach(self: *Daemon, gpa: std.mem.Allocator, client: *Client, i: usize) void {
@@ -1867,6 +1889,68 @@ test "min_window_size keeps the smallest size whichever client attaches or leads
 
     _ = daemon.closeClient(alloc, big, 1, false);
     _ = daemon.closeClient(alloc, small, 0, false);
+}
+
+test "MinWindow turns min_window_size on and off for a running session" {
+    const alloc = std.testing.allocator;
+    const cfg = Cfg{ .socket_dir = "", .log_dir = "" };
+    var term = try initTerminal(alloc, std.testing.io, testSized(24, 80), &cfg);
+    defer term.deinit(alloc);
+    const pty = try TestPty.open();
+    defer pty.close();
+
+    var daemon = testDaemon();
+    defer daemon.clients.deinit(alloc);
+
+    const a = try lib_posix.pipe2(.{});
+    const b = try lib_posix.pipe2(.{});
+    lib_posix.close(a[1]);
+    lib_posix.close(b[1]);
+    const leader = try testClient(alloc, a[0], false);
+    const other = try testClient(alloc, b[0], false);
+    try daemon.clients.append(alloc, leader);
+    try daemon.clients.append(alloc, other);
+
+    // The session was created without --min-window: it follows the leader.
+    const big = testSized(50, 200);
+    const small = testSized(30, 100);
+    try daemon.handleInit(alloc, leader, pty.master, &term, std.mem.asBytes(&big));
+    try daemon.handleInit(alloc, other, pty.master, &term, std.mem.asBytes(&small));
+    try std.testing.expectEqual(@as(u16, 200), pty.size().cols);
+
+    // A payload that is not one byte changes nothing.
+    try daemon.handleMinWindow(alloc, pty.master, &term, "");
+    try daemon.handleMinWindow(alloc, pty.master, &term, &.{ 1, 1 });
+    try std.testing.expect(!daemon.min_window_size);
+
+    // Turned on, the sizes the clients already reported count: the next
+    // daemonLoop iteration (applyMinSize here) shrinks the PTY.
+    try daemon.handleMinWindow(alloc, pty.master, &term, &.{1});
+    try std.testing.expect(daemon.min_window_size);
+    try daemon.applyMinSize(alloc, pty.master, &term);
+    try std.testing.expectEqual(@as(u16, 100), pty.size().cols);
+    try std.testing.expectEqual(@as(u16, 30), pty.size().rows);
+    try std.testing.expectEqual(@as(u16, 100), term.cols);
+
+    // Turned off, the leader gets its own size back at once.
+    try daemon.handleMinWindow(alloc, pty.master, &term, &.{0});
+    try std.testing.expect(!daemon.min_window_size);
+    try std.testing.expectEqual(@as(u16, 200), pty.size().cols);
+    try std.testing.expectEqual(@as(u16, 50), pty.size().rows);
+    try std.testing.expectEqual(@as(u16, 200), term.cols);
+    try std.testing.expectEqual(@as(u16, 50), term.rows);
+
+    // And only the leader resizes the PTY again (daemonLoop no longer calls
+    // applyMinSize).
+    const smaller = testSized(25, 90);
+    try daemon.handleResize(alloc, other, pty.master, &term, std.mem.asBytes(&smaller));
+    try std.testing.expectEqual(@as(u16, 200), pty.size().cols);
+    const bigger = testSized(60, 220);
+    try daemon.handleResize(alloc, leader, pty.master, &term, std.mem.asBytes(&bigger));
+    try std.testing.expectEqual(@as(u16, 220), pty.size().cols);
+
+    _ = daemon.closeClient(alloc, other, 1, false);
+    _ = daemon.closeClient(alloc, leader, 0, false);
 }
 
 test "without min_window_size only the leader resizes the PTY" {

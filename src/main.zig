@@ -446,7 +446,7 @@ fn help(io: std.Io) !void {
         \\Usage: zmx <command> [args...]
         \\
         \\Commands:
-        \\  [a]ttach [--labels kv] [--min-window] <name> [command...]  Attach to session, creating if needed
+        \\  [a]ttach [--labels kv] [-w] <name> [command...]            Attach to session, creating if needed
         \\  [r]un <name> [-d] [command...]                             Send command without attaching
         \\  [s]end <name> <text...>                                    Send raw input to session PTY
         \\  [p]rint <name> <text...>                                   Inject text into session display
@@ -473,16 +473,18 @@ fn help(io: std.Io) !void {
         \\  `zmx set` takes. A caller that creates and then labels in two steps
         \\  leaves an unlabelled session behind if it dies between them.
         \\
-        \\  --min-window sizes the PTY to the smallest cols and the smallest
+        \\  -w, --min-window sizes the PTY to the smallest cols and the smallest
         \\  rows among the attached clients instead of following the last active
-        \\  one. It is fixed when the session is created; later attaches cannot
-        \\  change it.
+        \\  one. On a session that already runs it turns this on from then on,
+        \\  and --unset-min-window turns it off again; an attach with neither
+        \\  leaves the session as it is.
         \\
         \\  Examples:
         \\    zmx attach dev
         \\    zmx attach dev vim
         \\    zmx attach --labels "project=api role=worker" build
-        \\    zmx attach --min-window dev
+        \\    zmx attach -w dev
+        \\    zmx attach --unset-min-window dev
         \\
         \\History:
         \\  This should generally be used with `tail` to print the last lines
@@ -1126,8 +1128,10 @@ const AttachArgs = struct {
     /// same space-separated form `zmx set` takes.
     labels: ?[]const u8 = null,
     want_help: bool = false,
-    /// `--min-window`: size the session's PTY to the smallest attached client.
-    min_window_size: bool = false,
+    /// `-w`/`--min-window` (true): size the session's PTY to the smallest
+    /// attached client. `--unset-min-window` (false): follow the leader again.
+    /// The last one given counts.
+    min_window_size: ?bool = null,
     /// `--labels` was given with nothing to apply.
     missing_labels_value: bool = false,
 };
@@ -1145,8 +1149,12 @@ fn parseAttachArgs(argv: []const []const u8) AttachArgs {
             parsed.want_help = true;
             return parsed;
         }
-        if (std.mem.eql(u8, arg, "--min-window")) {
+        if (std.mem.eql(u8, arg, "--min-window") or std.mem.eql(u8, arg, "-w")) {
             parsed.min_window_size = true;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--unset-min-window")) {
+            parsed.min_window_size = false;
             continue;
         }
         if (std.mem.startsWith(u8, arg, labels_flag ++ "=")) {
@@ -1261,9 +1269,25 @@ fn send(alloc: std.mem.Allocator, io: std.Io, session_name: []const u8, text_par
 
 test "parseAttachArgs reads --min-window before the session name" {
     const parsed = parseAttachArgs(&.{ "--min-window", "dev", "vim" });
-    try std.testing.expect(parsed.min_window_size);
+    try std.testing.expectEqual(@as(?bool, true), parsed.min_window_size);
     try std.testing.expectEqualStrings("dev", parsed.session_name);
     try std.testing.expectEqual(@as(usize, 2), parsed.command_start);
+}
+
+test "parseAttachArgs reads -w and --unset-min-window, the last one counting" {
+    try std.testing.expectEqual(@as(?bool, null), parseAttachArgs(&.{"dev"}).min_window_size);
+    try std.testing.expectEqual(@as(?bool, true), parseAttachArgs(&.{ "-w", "dev" }).min_window_size);
+
+    const unset = parseAttachArgs(&.{ "--unset-min-window", "dev", "vim" });
+    try std.testing.expectEqual(@as(?bool, false), unset.min_window_size);
+    try std.testing.expectEqualStrings("dev", unset.session_name);
+    try std.testing.expectEqual(@as(usize, 2), unset.command_start);
+
+    try std.testing.expectEqual(@as(?bool, false), parseAttachArgs(&.{ "-w", "--unset-min-window", "dev" }).min_window_size);
+    try std.testing.expectEqual(@as(?bool, true), parseAttachArgs(&.{ "--unset-min-window", "-w", "dev" }).min_window_size);
+
+    // After the session name both belong to the session's command.
+    try std.testing.expectEqual(@as(?bool, null), parseAttachArgs(&.{ "dev", "-w" }).min_window_size);
 }
 
 test "parseAttachArgs reads a bare session name" {

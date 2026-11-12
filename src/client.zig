@@ -35,9 +35,10 @@ pub const AttachOptions = struct {
     shell: ?[]const u8 = null,
     labels: ?[]const u8 = null,
     tracked_env: ?[]const u8 = null,
-    /// Size the PTY to the smallest attached client instead of following the
-    /// leader. Applies only when this attach creates the session.
-    min_window_size: bool = false,
+    /// true sizes the PTY to the smallest attached client instead of following
+    /// the leader, false has it follow the leader again, and null leaves the
+    /// session as it is. Applies to a session that already runs as well.
+    min_window_size: ?bool = null,
 };
 
 pub const RunOptions = struct {
@@ -135,6 +136,17 @@ pub fn attach(alloc: Allocator, io: Io, name: []const u8, opts: AttachOptions) !
         defer lib_posix.close(fd);
         const target_sesh = try socket.getSeshName(alloc, name);
         defer alloc.free(target_sesh);
+        // The client that switches attaches with its own options, not ours, so
+        // tell the target session directly. One that does not exist yet is
+        // created by that client, without --min-window.
+        if (opts.min_window_size) |enable| {
+            const target_path = try socket.getSocketPath(alloc, cfg.socket_dir, target_sesh);
+            defer alloc.free(target_path);
+            if (ipc.connectSession(target_path)) |target_fd| {
+                defer lib_posix.close(target_fd);
+                ipc.send(target_fd, .MinWindow, &.{@intFromBool(enable)}) catch {};
+            } else |_| {}
+        }
         ipc.send(fd, .Switch, target_sesh) catch |err| switch (err) {
             error.BrokenPipe, error.ConnectionResetByPeer => return,
             else => return err,
@@ -156,7 +168,7 @@ pub fn attach(alloc: Allocator, io: Io, name: []const u8, opts: AttachOptions) !
         daemon.command = opts.command;
         if (opts.cwd) |cwd| daemon.setCwd(cwd);
         if (opts.shell) |sh| daemon.shell = sh;
-        daemon.min_window_size = opts.min_window_size;
+        daemon.min_window_size = opts.min_window_size orelse false;
         const is_daemon_proc = try daemon.ensureSession(io);
         if (is_daemon_proc) std.process.exit(0);
     }
@@ -192,7 +204,7 @@ pub fn attach(alloc: Allocator, io: Io, name: []const u8, opts: AttachOptions) !
     _ = try lib_posix.write(lib_posix.STDOUT_FILENO, clear_seq);
 
     const env_str = opts.tracked_env orelse "";
-    const looper = try loop.clientLoop(client_sock, env_str);
+    const looper = try loop.clientLoop(client_sock, env_str, opts.min_window_size);
     switch (looper.kind) {
         .detach => return,
         .switch_session => {
@@ -200,6 +212,9 @@ pub fn attach(alloc: Allocator, io: Io, name: []const u8, opts: AttachOptions) !
                 _ = lib_posix.write(lib_posix.STDOUT_FILENO, restore_seq) catch {};
                 var new_opts = opts;
                 if (looper.cwd) |new_cwd| new_opts.cwd = new_cwd;
+                // --min-window was asked for the session named on the command
+                // line; the one switched to keeps its own setting.
+                new_opts.min_window_size = null;
                 return attach(alloc, io, target_name, new_opts);
             }
         },
