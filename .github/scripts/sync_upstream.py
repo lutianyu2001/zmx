@@ -243,13 +243,21 @@ def conflicts_part(own_branch, conflicts):
 
 def merge_in_worktree(tree, own_branch, head):
     """Merges head into the default branch without committing. Returns the conflicting files."""
+    def unmerged():
+        return git("diff", "--name-only", "--diff-filter=U", cwd=tree).stdout.split()
+
     git("worktree", "add", "--detach", tree, f"origin/{own_branch}")
-    git("merge", "--no-ff", "--no-commit", head, cwd=tree, check=False)
+    # git merge wants to know the committer also when it commits nothing, and a runner has none.
+    merge = run("git", "merge", "--no-ff", "--no-commit", head,
+                cwd=tree, check=False, env={**os.environ, **BOT})
+    if merge.returncode != 0 and not unmerged():
+        # Not a conflict: without this the merge would pass for one that changed nothing.
+        raise RuntimeError(f"git merge {head[:9]}: {merge.stderr.strip() or merge.stdout.strip()}")
     # The fork's workflows stay as they are: none of upstream's comes in, changed or new.
     git("rm", "-rqf", "--ignore-unmatch", "--", WORKFLOWS, cwd=tree)
     if git("ls-tree", "-r", "--name-only", "HEAD", "--", WORKFLOWS, cwd=tree).stdout.strip():
         git("checkout", "HEAD", "--", WORKFLOWS, cwd=tree)
-    return git("diff", "--name-only", "--diff-filter=U", cwd=tree).stdout.split()
+    return unmerged()
 
 
 def main():
