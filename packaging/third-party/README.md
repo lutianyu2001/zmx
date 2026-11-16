@@ -5,8 +5,8 @@ release` puts into every release archive next to zmx's own `LICENSE`.
 
 | Directory  | Project                                                         | Version                          | License                                  |
 | ---------- | --------------------------------------------------------------- | -------------------------------- | ---------------------------------------- |
-| `ghostty/` | [Ghostty](https://github.com/ghostty-org/ghostty) (libghostty-vt) | `22f100c` (see `build.zig.zon`) | MIT                                      |
-| `uucode/`  | [uucode](https://github.com/jacobsandlund/uucode)               | `ea62149` (pinned by Ghostty)    | MIT; Unicode-3.0 (UCD data); Hoehrmann's UTF-8 decoder (MIT) |
+| `ghostty/` | [Ghostty](https://github.com/ghostty-org/ghostty) (libghostty-vt) | `53e5514` (see `build.zig.zon`) | MIT                                      |
+| `uucode/`  | [uucode](https://github.com/jacobsandlund/uucode)               | `1fb7343` (pinned by Ghostty)    | MIT; Unicode-3.0 (UCD data); Hoehrmann's UTF-8 decoder (MIT) |
 | `simdutf/` | [simdutf](https://github.com/simdutf/simdutf), vendored by Ghostty | 9.0.0                          | Apache-2.0 OR MIT                        |
 | `highway/` | [Highway](https://github.com/google/highway)                    | `66486a1` (pinned by Ghostty)    | Apache-2.0 OR BSD-3-Clause               |
 | `wuffs/`   | [Wuffs](https://github.com/google/wuffs)                        | `7411f48` (pinned by Ghostty)    | Apache-2.0 and MIT                       |
