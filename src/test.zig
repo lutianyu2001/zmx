@@ -5,6 +5,7 @@ comptime {
     _ = @import("ipc.zig");
     _ = @import("label.zig");
     _ = @import("signal.zig");
+    _ = @import("status.zig");
     _ = @import("loop.zig");
     _ = @import("terminal.zig");
     _ = @import("cfg.zig");

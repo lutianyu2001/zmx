@@ -11,6 +11,7 @@ Use spec: https://common-changelog.org/
 - Release archives include zmx's `LICENSE` and, in `third-party/`, the licenses of the libraries compiled into the binary
 - `zmx list` reports the process in the foreground of each session as `fg=<name>`
 - Attached terminals are told again, through the `zmx_foreground` user variable, when the session's foreground process changes
+- Attaching replays the program status reports (OSC 7501) that the session's programs sent while the terminal was not attached
 
 ### Fixed
 

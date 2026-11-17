@@ -8,6 +8,7 @@ const label = @import("label.zig");
 const lib_posix = @import("posix.zig");
 const Cfg = @import("cfg.zig");
 const signal = @import("signal.zig");
+const status = @import("status.zig");
 const assert = std.debug.assert;
 const daemonize = @import("daemonize.zig");
 const builtin = @import("builtin");
@@ -399,6 +400,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                     daemon.setPwd(&term);
                     daemon.has_pty_output = true;
                     daemon.foreground_stale = true;
+                    daemon.status_scanner.feed(gpa, &daemon.program_status, buf[0..n]);
 
                     // When no real terminal client has attached yet, respond to
                     // terminal queries (e.g. DA1/DA2) on behalf of the terminal.
@@ -665,6 +667,10 @@ pub const Daemon = struct {
     socket_path: []const u8,
     // === opt ===
     pty_write_buf: std.ArrayList(u8) = .empty,
+    /// What the session's programs last reported about themselves (OSC 7501),
+    /// replayed to a terminal when it attaches.
+    program_status: status.Records = .{},
+    status_scanner: status.Scanner = .{},
     clients: std.ArrayList(*Client) = .empty,
     labels: std.StringHashMapUnmanaged([]u8) = .empty,
     // This control which client is the leader.  The leader controls terminal state and
@@ -718,6 +724,7 @@ pub const Daemon = struct {
         }
         self.labels.deinit(gpa);
         self.pty_write_buf.deinit(gpa);
+        self.program_status.deinit(gpa);
     }
 
     pub fn shutdown(self: *Daemon, gpa: std.mem.Allocator) void {
@@ -1126,6 +1133,24 @@ pub const Daemon = struct {
         }
     }
 
+    /// Queue the program status reports (OSC 7501) the session's programs have
+    /// sent, for a terminal that was not attached when they passed through.
+    fn queueProgramStatus(self: *Daemon, gpa: std.mem.Allocator, client: *Client) void {
+        if (self.program_status.list.items.len == 0) return;
+
+        var reports: std.Io.Writer.Allocating = .init(gpa);
+        defer reports.deinit();
+        self.program_status.write(&reports.writer) catch |err| {
+            std.log.warn("failed to format program status err={s}", .{@errorName(err)});
+            return;
+        };
+        ipc.appendMessage(gpa, &client.write_buf, .Output, reports.written()) catch |err| {
+            std.log.warn("failed to buffer program status err={s}", .{@errorName(err)});
+            return;
+        };
+        client.has_pending_output = true;
+    }
+
     pub fn handleInit(
         self: *Daemon,
         gpa: std.mem.Allocator,
@@ -1190,6 +1215,7 @@ pub const Daemon = struct {
         }
 
         self.queueSessionInfo(gpa, client, pty_fd);
+        self.queueProgramStatus(gpa, client);
 
         // only resize if leader, or on every attach with --min-window
         if (sets_size) {
