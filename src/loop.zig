@@ -272,6 +272,31 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
         }
         had_terminal_client = has_terminal_client;
 
+        // Tell the attached terminals when the foreground process has changed.
+        // Nothing announces that change, so it is looked for after PTY output,
+        // which a program taking or giving back the terminal nearly always
+        // produces, and at most every FOREGROUND_CHECK_MS, so that a flood of
+        // output costs no more than that. The poll timeout below makes the
+        // look after the last output of a burst happen when nothing follows.
+        var poll_timeout: i32 = -1;
+        if (daemon.foreground_stale) {
+            if (!has_terminal_client) {
+                daemon.foreground_stale = false;
+            } else if (vt_stream.ground()) {
+                // Only between escape sequences and whole characters: the
+                // report goes into the same stream as the program's output.
+                const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
+                const wait = daemon.foreground_checked_at + Daemon.FOREGROUND_CHECK_MS - now;
+                if (wait > 0) {
+                    poll_timeout = @intCast(wait);
+                } else {
+                    daemon.foreground_stale = false;
+                    daemon.foreground_checked_at = now;
+                    daemon.reportForeground(gpa, pty_fd);
+                }
+            }
+        }
+
         poll_fds.clearRetainingCapacity();
 
         try poll_fds.append(gpa, .{
@@ -304,7 +329,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
             });
         }
 
-        _ = try lib_posix.poll(poll_fds.items, -1);
+        _ = try lib_posix.poll(poll_fds.items, poll_timeout);
 
         if (poll_fds.items[2].revents & lib_posix.POLL.IN != 0) {
             signal.drainSignalPipe() catch {};
@@ -369,6 +394,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                     vt_stream.nextSlice(buf[0..n]);
                     daemon.setPwd(&term);
                     daemon.has_pty_output = true;
+                    daemon.foreground_stale = true;
 
                     // When no real terminal client has attached yet, respond to
                     // terminal queries (e.g. DA1/DA2) on behalf of the terminal.
@@ -575,6 +601,20 @@ pub const Client = struct {
     read_buf: ipc.SocketBuffer,
     write_buf: std.ArrayList(u8),
     env_str: ?[]u8 = null,
+    /// The foreground process this client's terminal was last told, so that
+    /// it is told again only when the process changes.
+    foreground_buf: [64]u8 = undefined,
+    foreground_len: usize = 0,
+
+    fn noteForeground(self: *Client, name: []const u8) void {
+        self.foreground_len = @min(name.len, self.foreground_buf.len);
+        @memcpy(self.foreground_buf[0..self.foreground_len], name[0..self.foreground_len]);
+    }
+
+    fn wasToldForeground(self: *const Client, name: []const u8) bool {
+        const told = self.foreground_buf[0..self.foreground_len];
+        return std.mem.eql(u8, told, name[0..@min(name.len, self.foreground_buf.len)]);
+    }
 
     pub fn deinit(self: *Client, gpa: std.mem.Allocator) void {
         lib_posix.close(self.socket_fd);
@@ -606,6 +646,14 @@ fn foregroundName(buf: []u8, pty_fd: i32) ?[]const u8 {
 }
 
 pub const Daemon = struct {
+    /// The shortest time between two looks at the foreground process.
+    const FOREGROUND_CHECK_MS = 200;
+
+    /// PTY output arrived since the foreground process was last looked at.
+    foreground_stale: bool = false,
+    /// When it was last looked at, in milliseconds of the `awake` clock.
+    foreground_checked_at: i64 = 0,
+
     cfg: *Cfg,
     session_name: []const u8,
     socket_path: []const u8,
@@ -998,6 +1046,31 @@ pub const Daemon = struct {
             return;
         };
         client.has_pending_output = true;
+        if (foreground) |name| client.noteForeground(name);
+    }
+
+    /// Queue the foreground process for every terminal that was last told of
+    /// another one.
+    fn reportForeground(self: *Daemon, gpa: std.mem.Allocator, pty_fd: i32) void {
+        var name_buf: [256]u8 = undefined;
+        const foreground = foregroundName(&name_buf, pty_fd) orelse return;
+
+        for (self.clients.items) |client| {
+            if (!client.is_terminal or client.wasToldForeground(foreground)) continue;
+
+            var info: std.Io.Writer.Allocating = .init(gpa);
+            defer info.deinit();
+            util.writeForeground(&info.writer, foreground) catch |err| {
+                std.log.warn("failed to format foreground err={s}", .{@errorName(err)});
+                continue;
+            };
+            ipc.appendMessage(gpa, &client.write_buf, .Output, info.written()) catch |err| {
+                std.log.warn("failed to buffer foreground err={s}", .{@errorName(err)});
+                continue;
+            };
+            client.has_pending_output = true;
+            client.noteForeground(foreground);
+        }
     }
 
     pub fn handleInit(
@@ -1493,6 +1566,26 @@ fn testClient(alloc: std.mem.Allocator, fd: i32, is_terminal: bool) !*Client {
     c.* = .{ .alloc = alloc, .socket_fd = fd, .read_buf = try ipc.SocketBuffer.init(alloc), .write_buf = .empty };
     c.is_terminal = is_terminal;
     return c;
+}
+
+test "Client remembers the foreground process its terminal was told" {
+    const alloc = std.testing.allocator;
+    const c = try testClient(alloc, -1, true);
+    defer {
+        c.read_buf.deinit();
+        alloc.destroy(c);
+    }
+
+    try std.testing.expect(!c.wasToldForeground("bash"));
+    c.noteForeground("bash");
+    try std.testing.expect(c.wasToldForeground("bash"));
+    try std.testing.expect(!c.wasToldForeground("vim"));
+
+    // Names longer than the buffer are compared by what fits in it.
+    const long: [80]u8 = @splat('x');
+    c.noteForeground(&long);
+    try std.testing.expect(c.wasToldForeground(&long));
+    try std.testing.expect(!c.wasToldForeground("bash"));
 }
 
 test "hasTerminalClient follows attach, detach and detach-all" {

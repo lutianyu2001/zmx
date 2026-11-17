@@ -7,6 +7,7 @@ Use spec: https://common-changelog.org/
 ### Added
 
 - `zmx list` reports the process in the foreground of each session as `fg=<name>`
+- Attached terminals are told again, through the `zmx_foreground` user variable, when the session's foreground process changes
 
 ### Fixed
 
