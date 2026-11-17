@@ -31,6 +31,11 @@ pub const Tag = enum(u8) {
     /// Scoped history: the active screen plus a bounded number of
     /// preceding scrollback rows. Request payload is `Capture`.
     Capture = 22,
+    /// Ask for the name of the process in the foreground of the session's
+    /// PTY. The daemon answers with `ForegroundData`.
+    ForegroundGet = 23,
+    /// The foreground process's name; empty when the daemon can't tell.
+    ForegroundData = 24,
     Unsupported = 255,
     // Non-exhaustive: this enum comes off the wire via bytesToValue and
     // @enumFromInt, so out-of-range values are representable
@@ -266,10 +271,13 @@ const SessionProbeResult = struct {
     fd: i32,
     info: Info,
     labels: ?[]const u8,
+    /// Null when the daemon can't tell, or is too old to be asked.
+    foreground: ?[]const u8,
     alloc: std.mem.Allocator,
 
     pub fn deinit(self: *const SessionProbeResult) void {
         if (self.labels) |lbl| self.alloc.free(lbl);
+        if (self.foreground) |fg| self.alloc.free(fg);
         lib_posix.close(self.fd);
     }
 };
@@ -284,6 +292,7 @@ pub fn probeSession(
 
     send(fd, .Info, "") catch return error.Unexpected;
     send(fd, .LabelGet, "") catch {};
+    send(fd, .ForegroundGet, "") catch {};
 
     var poll_fds = [_]lib_posix.pollfd{.{ .fd = fd, .events = lib_posix.POLL.IN, .revents = 0 }};
     const poll_result = lib_posix.poll(&poll_fds, timeout_ms) catch return error.Unexpected;
@@ -300,6 +309,11 @@ pub fn probeSession(
     var info_result: ?Info = null;
     var labels: ?[]const u8 = null;
     errdefer if (labels) |lbl| alloc.free(lbl);
+    var foreground: ?[]const u8 = null;
+    errdefer if (foreground) |fg| alloc.free(fg);
+    // A daemon that doesn't know `ForegroundGet` answers `Unsupported`; one
+    // older still answers nothing, and the idle timeout below ends the wait.
+    var foreground_answered = false;
 
     while (true) {
         if (sb.next()) |msg| {
@@ -310,8 +324,13 @@ pub fn probeSession(
             if (msg.header.tag == .LabelData) {
                 labels = alloc.dupe(u8, msg.payload) catch null;
             }
+            if (msg.header.tag == .ForegroundData) {
+                if (msg.payload.len > 0) foreground = alloc.dupe(u8, msg.payload) catch null;
+                foreground_answered = true;
+            }
+            if (msg.header.tag == .Unsupported) foreground_answered = true;
 
-            if (info_result != null and labels != null) break;
+            if (info_result != null and labels != null and foreground_answered) break;
             continue;
         }
 
@@ -327,6 +346,7 @@ pub fn probeSession(
             .fd = fd,
             .info = info,
             .labels = labels,
+            .foreground = foreground,
             .alloc = alloc,
         };
     }
@@ -349,14 +369,15 @@ test "Info wire size is frozen" {
 
 test "Tag wire values are frozen" {
     inline for (.{
-        .{ Tag.Input, 0 },     .{ Tag.Output, 1 },        .{ Tag.Resize, 2 },
-        .{ Tag.Detach, 3 },    .{ Tag.DetachAll, 4 },     .{ Tag.Kill, 5 },
-        .{ Tag.Info, 6 },      .{ Tag.Init, 7 },          .{ Tag.History, 8 },
-        .{ Tag.Run, 9 },       .{ Tag.Ack, 10 },          .{ Tag.Switch, 11 },
-        .{ Tag.Write, 12 },    .{ Tag.TaskComplete, 13 }, .{ Tag.LabelGet, 14 },
-        .{ Tag.LabelSet, 15 }, .{ Tag.LabelClear, 16 },   .{ Tag.LabelData, 17 },
-        .{ Tag.Send, 18 },     .{ Tag.EnvGet, 19 },       .{ Tag.EnvSet, 20 },
-        .{ Tag.EnvData, 21 },  .{ Tag.Capture, 22 },      .{ Tag.Unsupported, 255 },
+        .{ Tag.Input, 0 },           .{ Tag.Output, 1 },        .{ Tag.Resize, 2 },
+        .{ Tag.Detach, 3 },          .{ Tag.DetachAll, 4 },     .{ Tag.Kill, 5 },
+        .{ Tag.Info, 6 },            .{ Tag.Init, 7 },          .{ Tag.History, 8 },
+        .{ Tag.Run, 9 },             .{ Tag.Ack, 10 },          .{ Tag.Switch, 11 },
+        .{ Tag.Write, 12 },          .{ Tag.TaskComplete, 13 }, .{ Tag.LabelGet, 14 },
+        .{ Tag.LabelSet, 15 },       .{ Tag.LabelClear, 16 },   .{ Tag.LabelData, 17 },
+        .{ Tag.Send, 18 },           .{ Tag.EnvGet, 19 },       .{ Tag.EnvSet, 20 },
+        .{ Tag.EnvData, 21 },        .{ Tag.Capture, 22 },      .{ Tag.ForegroundGet, 23 },
+        .{ Tag.ForegroundData, 24 }, .{ Tag.Unsupported, 255 },
     }) |p| try std.testing.expectEqual(@as(u8, p[1]), @backingInt(p[0]));
 }
 

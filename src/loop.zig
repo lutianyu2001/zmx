@@ -507,7 +507,8 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                         .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
                         .Capture => try daemon.handleCapture(gpa, client, &term, msg.payload),
                         .Run => try daemon.handleRun(gpa, io, client, msg.payload),
-                        .Ack, .TaskComplete, .LabelData, .EnvData, .Unsupported => {},
+                        .ForegroundGet => try daemon.handleForegroundGet(gpa, client, pty_fd),
+                        .Ack, .TaskComplete, .LabelData, .EnvData, .ForegroundData, .Unsupported => {},
                         .Write => try daemon.handleWrite(gpa, client, msg.payload),
                         _ => {
                             std.log.warn(
@@ -596,6 +597,14 @@ pub const Client = struct {
 /// crashes for one session won't crash all the other sessions.
 ///
 /// Conceptually it's also much simpler to reason about.
+/// The name of the process in the foreground of the PTY, as `util.processName`
+/// gives it: what the session is running right now.
+fn foregroundName(buf: []u8, pty_fd: i32) ?[]const u8 {
+    var pgrp: lib_posix.pid_t = 0;
+    if (cross.ioctl(pty_fd, cross.TIOCGPGRP, &pgrp) != 0 or pgrp <= 0) return null;
+    return util.processName(buf, pgrp);
+}
+
 pub const Daemon = struct {
     cfg: *Cfg,
     session_name: []const u8,
@@ -976,9 +985,7 @@ pub const Daemon = struct {
     /// Queue the session name and foreground process for a client's terminal.
     fn queueSessionInfo(self: *Daemon, gpa: std.mem.Allocator, client: *Client, pty_fd: i32) void {
         var name_buf: [256]u8 = undefined;
-        var pgrp: lib_posix.pid_t = 0;
-        const has_pgrp = cross.ioctl(pty_fd, cross.TIOCGPGRP, &pgrp) == 0 and pgrp > 0;
-        const foreground = if (has_pgrp) util.processName(&name_buf, pgrp) else null;
+        const foreground = foregroundName(&name_buf, pty_fd);
 
         var info: std.Io.Writer.Allocating = .init(gpa);
         defer info.deinit();
@@ -1374,6 +1381,13 @@ pub const Daemon = struct {
         try client.setEnv(gpa, env_str);
 
         try ipc.appendMessage(gpa, &client.write_buf, .Ack, "");
+        client.has_pending_output = true;
+    }
+
+    fn handleForegroundGet(_: *Daemon, gpa: std.mem.Allocator, client: *Client, pty_fd: i32) !void {
+        var name_buf: [256]u8 = undefined;
+        const foreground = foregroundName(&name_buf, pty_fd) orelse "";
+        try ipc.appendMessage(gpa, &client.write_buf, .ForegroundData, foreground);
         client.has_pending_output = true;
     }
 

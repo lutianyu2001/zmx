@@ -4,6 +4,10 @@ Use spec: https://common-changelog.org/
 
 ## Staged
 
+### Added
+
+- `zmx list` reports the process in the foreground of each session as `fg=<name>`
+
 ### Fixed
 
 - Prevent daemon shutdown crashes caused by freeing the caller-owned socket path with a different allocator

@@ -22,6 +22,8 @@ pub const SessionEntry = struct {
     error_name: ?[]const u8,
     cmd: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
+    /// Name of the process in the foreground of the session's PTY.
+    fg: ?[]const u8 = null,
     labels: ?[]const u8 = null,
     created_at: u64,
     task_ended_at: ?u64,
@@ -31,6 +33,7 @@ pub const SessionEntry = struct {
         alloc.free(self.name);
         if (self.cmd) |cmd| alloc.free(cmd);
         if (self.cwd) |cwd| alloc.free(cwd);
+        if (self.fg) |fg| alloc.free(fg);
         if (self.labels) |l| alloc.free(l);
     }
 
@@ -98,6 +101,11 @@ pub fn get_session_entries(
             else
                 null;
 
+            const fg = if (result.foreground) |fg_name|
+                alloc.dupe(u8, fg_name) catch null
+            else
+                null;
+
             const labels = if (result.labels) |lbl|
                 alloc.dupe(u8, lbl) catch null
             else
@@ -111,6 +119,7 @@ pub fn get_session_entries(
                 .error_name = null,
                 .cmd = cmd,
                 .cwd = cwd,
+                .fg = fg,
                 .labels = labels,
                 .created_at = result.info.created_at,
                 .task_ended_at = result.info.task_ended_at,
@@ -847,6 +856,9 @@ pub fn writeSessionLine(
     if (session.cmd) |cmd| {
         try writer.print("\tcmd={s}", .{cmd});
     }
+    if (session.fg) |fg| {
+        try writer.print("\tfg={s}", .{fg});
+    }
     if (session.task_ended_at) |ended_at| {
         if (ended_at > 0) {
             try writer.print("\tended={d}", .{ended_at});
@@ -863,6 +875,29 @@ pub fn writeSessionLine(
         }
     }
     try writer.print("\n", .{});
+}
+
+test "writeSessionLine puts the foreground process after the command" {
+    var builder: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer builder.deinit();
+
+    try writeSessionLine(&builder.writer, .{
+        .name = "dev",
+        .pid = 123,
+        .clients_len = 1,
+        .is_error = false,
+        .error_name = null,
+        .cmd = "vim notes",
+        .fg = "vim",
+        .labels = "env=prd",
+        .created_at = 0,
+        .task_ended_at = null,
+        .task_exit_code = null,
+    }, false, null);
+    try testing.expectEqualStrings(
+        "name=dev\tpid=123\tclients=1\tcreated=0\tcmd=vim notes\tfg=vim\tenv=prd\n",
+        builder.writer.buffered(),
+    );
 }
 
 test "writeSessionLine formats output for current session and short output" {
