@@ -336,3 +336,14 @@ load test_helper
   done
   cmp "$src" "$dst"
 }
+
+@test "list: reports the foreground process" {
+  # The marker is assembled at runtime so the echoed command line can't match it.
+  "$ZMX" run test-fg -d bash -c 'printf "READY_%s\n" OK; exec sleep 30'
+  wait_for_output test-fg "READY_OK"
+  sleep 0.2 # let the exec happen, the process name only changes then
+
+  run "$ZMX" list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\tfg=sleep'* ]]
+}

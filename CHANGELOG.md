@@ -9,6 +9,7 @@ Use spec: https://common-changelog.org/
 - `zmx attach --min-window` sizes a session's PTY to the smallest cols and rows among attached clients
 - Attaching now reports the session name and foreground process to the terminal as `zmx_session` and `zmx_foreground` user variables
 - Release archives include zmx's `LICENSE` and, in `third-party/`, the licenses of the libraries compiled into the binary
+- `zmx list` reports the process in the foreground of each session as `fg=<name>`
 
 ### Fixed
 
