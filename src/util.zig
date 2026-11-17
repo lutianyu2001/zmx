@@ -333,7 +333,12 @@ pub fn writeSessionInfo(
     foreground: ?[]const u8,
 ) !void {
     try writeUserVar(writer, "zmx_session", session_name);
-    if (foreground) |name| try writeUserVar(writer, "zmx_foreground", name);
+    if (foreground) |name| try writeForeground(writer, name);
+}
+
+/// Tell the terminal what the session it is showing now runs.
+pub fn writeForeground(writer: *std.Io.Writer, foreground: []const u8) !void {
+    try writeUserVar(writer, "zmx_foreground", foreground);
 }
 
 extern "c" fn proc_name(pid: c_int, buffer: [*]u8, buffersize: u32) c_int;

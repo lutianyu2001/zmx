@@ -158,3 +158,25 @@ with tempfile.TemporaryDirectory(prefix="zmx-signal-", dir="/tmp") as socket_dir
             os.close(slave)
 PY
 }
+
+@test "attached clients are told when the foreground process changes" {
+  # The second program prints as it runs: a change is looked for after output.
+  "$ZMX" run test-fg-change -d bash -c \
+    'printf "READY_%s\n" OK; read -r _; exec sh -c "while :; do echo tick; sleep 0.2; done"'
+  wait_for_output test-fg-change "READY_OK"
+
+  attach_output test-fg-change 3 >"$BATS_TEST_TMPDIR/attach.out" &
+  local attach_pid=$!
+  sleep 0.5 # attached, and told of bash
+  "$ZMX" send test-fg-change $'\n'
+  wait "$attach_pid"
+
+  output=$(<"$BATS_TEST_TMPDIR/attach.out")
+  local bash_var sh_var
+  bash_var=$'\e]1337;SetUserVar=zmx_foreground='"$(printf bash | base64)"$'\a'
+  sh_var=$'\e]1337;SetUserVar=zmx_foreground='"$(printf sh | base64)"$'\a'
+  [[ "$output" == *"$bash_var"*"$sh_var"* ]]
+  # Told once, not with every line the program prints.
+  local rest="${output#*"$sh_var"}"
+  [[ "$rest" != *zmx_foreground* ]]
+}
