@@ -9,16 +9,20 @@ toc: 3
 
 ### binaries
 
-- https://zmx.sh/a/zmx-0.8.1-linux-aarch64.tar.gz
-- https://zmx.sh/a/zmx-0.8.1-linux-x86_64.tar.gz
-- https://zmx.sh/a/zmx-0.8.1-macos-aarch64.tar.gz
-- https://zmx.sh/a/zmx-0.8.1-macos-x86_64.tar.gz
+- https://zmx.sh/a/zmx-1.0.1-linux-aarch64.tar.gz
+- https://zmx.sh/a/zmx-1.0.1-linux-x86_64.tar.gz
+- https://zmx.sh/a/zmx-1.0.1-macos-aarch64.tar.gz
+- https://zmx.sh/a/zmx-1.0.1-macos-x86_64.tar.gz
 
 ### homebrew
 
 ```bash
 brew install neurosnap/tap/zmx
 ```
+
+### gh releases
+
+We upload our binaries to github as well: https://github.com/neurosnap/zmx/releases
 
 ### mise-en-place
 
@@ -46,7 +50,7 @@ nix run github:neurosnap/zmx
 
 ### packages (unofficial)
 
-- [Alpine Linux](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zmx)
+- [Alpine Linux](https://pkgs.alpinelinux.org/package/edge/community/x86_64/zmx)
 - [Arch AUR tracking releases](https://aur.archlinux.org/packages/zmx)
 - [Arch AUR tracking git](https://aur.archlinux.org/packages/zmx-git)
 - [openSUSE Tumbleweed](https://software.opensuse.org/package/zmx)
