@@ -4,6 +4,10 @@ Use spec: https://common-changelog.org/
 
 ## Staged
 
+### Added
+
+- Attaching replays the program status reports (OSC 7501) that the session's programs sent while the terminal was not attached
+
 ### Fixed
 
 - Prevent daemon shutdown crashes caused by freeing the caller-owned socket path with a different allocator
