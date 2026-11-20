@@ -13,9 +13,31 @@ permissions:
   contents: read
 
 jobs:
+  # Whether the tag is a pre-release: one that ends in -alpha, -beta, -rc, -pre, -preview or -dev,
+  # with or without a number after it (v1.2.0-rc.1, v1.2.0-rc1; in a sidestream fork
+  # v0.8.2-mod.2-rc.1, while v0.8.2-mod.2 is a release). A pre-release is built as a release is and gets a GitHub pre-release with its files,
+  # to download and try: it goes to no registry or package repository, and starts no other workflow.
+  kind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      prerelease: ${{ steps.kind.outputs.prerelease }}
+    steps:
+      - id: kind
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if printf '%s\n' "$TAG" | grep -Eq -- '-(alpha|beta|rc|pre|preview|dev)\.?[0-9]*$'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Builds the archives from the tag, with neither a secret nor a token that can write: building runs
   # the project's code and its dependencies'.
   build:
+    needs: kind
     strategy:
       matrix:
         # Per project: the systems the release ships for, each with the name its archive carries.
@@ -41,15 +63,24 @@ jobs:
       - name: Check that the tag matches build.zig.zon
         env:
           TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.kind.outputs.prerelease }}
         run: |
           version=$(sed -nE 's/^ *\.version = "(.*)",$/\1/p' build.zig.zon)
-          if [ "v$version" != "$TAG" ]; then
+          # A pre-release keeps the version of the release it leads to.
+          if [ "$PRERELEASE" != true ] && [ "v$version" != "$TAG" ]; then
             echo "tag $TAG doesn't match version $version" >&2
             exit 1
           fi
       # No ci.yml: the fork's tests run here, before anything is built for release.
       - name: Run unit tests
         run: zig build test -Dtarget=x86_64-linux-musl
+      # A pre-release is built with the tag's version, which .github/scripts/release-version.py
+      # writes into this checkout alone: the repository's manifest keeps the version of the release
+      # the pre-release leads to. For a release RELEASE_VERSION is empty and nothing is changed.
+      - name: Give a pre-release the tag's version
+        env:
+          RELEASE_VERSION: ${{ needs.kind.outputs.prerelease == 'true' && github.ref_name || '' }}
+        run: python3 .github/scripts/release-version.py
       - name: Build and pack
         env:
           NAME: ${{ matrix.name }}
@@ -67,7 +98,7 @@ jobs:
 
   # Creates the release from the archives build made, and runs none of the project's code.
   github-release:
-    needs: build
+    needs: [kind, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -83,16 +114,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.kind.outputs.prerelease }}
         run: |
-          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes --prerelease="$PRERELEASE"
 
   # Asks q0wkp/pkgs to package this release, which nothing else does: its Sync workflow has no
   # schedule. The token is a fine-grained one of q0wkp's, for q0wkp/pkgs only, with Actions read and
   # write: it can start the workflow but not change the repository. Without it this job fails, so the
   # failed run's mail says the release is waiting.
   pkgs:
-    # After the job that creates the release, which this one reads.
-    needs: github-release
+    # After the job that creates the release, which this one reads. Not for a pre-release.
+    needs: [kind, github-release]
+    if: needs.kind.outputs.prerelease != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
